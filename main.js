@@ -1,18 +1,22 @@
 // PIEL DE ARCA — instrumento visual. Physarum (tejido) + steering (venas y "alma"). Sin librerías.
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
-const N = 60000, CELL = 3;               // agentes Physarum y tamaño de celda (sube CELL si va lento)
-const K = ['sa', 'ra', 'so', 'ss', 'dep', 'dec'];
-const M = [ // sa: ángulo sensor, ra: giro, so: distancia sensor, ss: paso, dep: depósito, dec: persistencia
-  { sa: .6,  ra: .5, so: 10, ss: 1.1, dep: .22, dec: .93,  pal: 0 }, // 1 tejido
-  { sa: .28, ra: .9, so: 18, ss: 1.6, dep: .3,  dec: .965, pal: 1 }, // 2 cicatriz
-  { sa: 1.1, ra: .6, so: 6,  ss: .8,  dep: .28, dec: .95,  pal: 2 }, // 3 células
-  { sa: .4,  ra: .2, so: 4,  ss: .6,  dep: .3,  dec: .975, pal: 3 }  // 4 coágulo
+let N = 0;                                // agentes (se calcula según la resolución de la simulación)
+const GRID = 520;                         // ancho de la rejilla: más alto = tejido más fino, pero más pesado
+// Estilo 36 Points: cada parámetro p(v) = a + b·v^c, con v = valor del trail bajo la partícula (0..1)
+// [sa: ángulo sensor, ra: giro, so: distancia sensor, ss: paso] (a,b,c) c/u, luego vs, dep, dec, resp, gain, paleta
+const M = [
+  [.78,0,1, .45,.7,1, 6,0,1, 1.1,-.4,1, .5,.1,.72,.02, 2.5, 0], // 1 tejido
+  [.78,0,1, .78,0,1, 6,0,1, 1,0,1,      .5,.1,.75,.01, 2.5, 1], // 2 cicatriz
+  [.6,.5,1, .3,1.5,1.2, 6,0,1, 1.5,-1,1, .4,.25,.88,.015, 1.2, 2], // 3 pliegues
+  [.78,0,1, .5,.6,1, 7,0,1, 1.2,-.5,1,  .5,.1,.75,.02, 2.5, 3], // 4 fibras
+  [.6,.5,1, .1,2,1, 5,0,1, 1.4,-1.1,1,  .4,.15,.8,.006, 2, 4]   // 5 alma: manchas + telaraña
 ];
-const PAL = [ // 5 paradas: negro → rojo oscuro → morado/rojo → piel
+const PAL = [ // 5 paradas por paleta
   [[0,0,0],[70,4,22],[140,20,60],[200,90,110],[250,190,170]],
   [[0,0,0],[40,6,60],[110,25,120],[190,70,140],[245,200,215]],
   [[0,0,0],[90,5,20],[190,20,40],[240,110,100],[255,215,185]],
-  [[0,0,0],[50,0,25],[120,10,60],[130,50,150],[235,170,190]]];
+  [[0,0,0],[50,0,25],[120,10,60],[130,50,150],[235,170,190]],
+  [[0,0,0],[90,50,0],[220,160,10],[255,220,60],[255,250,210]]]; // alma: amarillo
 const lut = new Float32Array(768), tl = new Float32Array(768);
 function buildLUT(p, out) {
   for (let k = 0; k < 256; k++) {
@@ -20,10 +24,21 @@ function buildLUT(p, out) {
     for (let c = 0; c < 3; c++) out[k * 3 + c] = PAL[p][i][c] + (PAL[p][i + 1][c] - PAL[p][i][c]) * f;
   }
 }
-let mode = 0, T = M[0], P = {}; K.forEach(k => P[k] = T[k]);
+let mode = 0, T = M[0]; const P = Float32Array.from(M[0]);
 buildLUT(0, lut); buildLUT(0, tl);
+const G = new Uint8Array(1024); for (let i = 0; i < 1024; i++) G[i] = 255 * Math.pow(i / 1023, .6);
+const QN = 256, qcs = new Float32Array(QN + 1), qsn = new Float32Array(QN + 1), qra = new Float32Array(QN + 1), qso = new Float32Array(QN + 1), qss = new Float32Array(QN + 1);
+function buildQ() { // tabla de parámetros según el valor del trail (evita pow por agente)
+  for (let k = 0; k <= QN; k++) {
+    const v = k / QN, sa = P[0] + P[1] * Math.pow(v, P[2]);
+    qcs[k] = Math.cos(sa); qsn[k] = Math.sin(sa);
+    qra[k] = Math.max(0, P[3] + P[4] * Math.pow(v, P[5]));
+    qso[k] = Math.max(1, P[6] + P[7] * Math.pow(v, P[8]));
+    qss[k] = Math.max(.05, P[9] + P[10] * Math.pow(v, P[11]));
+  }
+}
 
-let W, H, gw, gh, trail, tmp, ax, ay, aa, img, px, tc, tctx, glowMap, veinC, vctx, activeN = 0, burst = 0, rt;
+let W, H, gw, gh, trail, tmp, ax, ay, aa, img, px, tc, tctx, glowMap, veinC, vctx, activeN = 0, burst = 0, rt, reach = 0, centers = [[0, 0]];
 function noiseMap() {
   const s = 22, cw = Math.ceil(gw / s) + 2, ch = Math.ceil(gh / s) + 2, g = Float32Array.from({ length: cw * ch }, Math.random), m = new Float32Array(gw * gh);
   for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
@@ -33,22 +48,24 @@ function noiseMap() {
   }
   return m;
 }
-function seed(k) { // el tejido nace desde k "heridas"
-  const cs = Array.from({ length: k }, () => [gw * (.2 + Math.random() * .6), gh * (.2 + Math.random() * .6)]);
+function seed(k) { // el tejido nace desde k "heridas" y se extiende (reach crece)
+  centers = Array.from({ length: k }, () => [gw * (.2 + Math.random() * .6), gh * (.2 + Math.random() * .6)]);
+  reach = Math.min(gw, gh) * .09;
   for (let i = 0; i < N; i++) {
-    const c = cs[i % k], a = Math.random() * 6.283, r = Math.sqrt(Math.random()) * Math.min(gw, gh) * .09;
+    const c = centers[i % k], a = Math.random() * 6.283, r = Math.sqrt(Math.random()) * reach;
     ax[i] = c[0] + Math.cos(a) * r; ay[i] = c[1] + Math.sin(a) * r; aa[i] = Math.random() * 6.283;
   }
-  activeN = k > 1 ? 3000 : 400;
+  activeN = k > 1 ? N * .05 : 400;
 }
 function init() {
-  W = cv.width = innerWidth; H = cv.height = innerHeight; gw = Math.ceil(W / CELL); gh = Math.ceil(H / CELL);
+  W = cv.width = innerWidth; H = cv.height = innerHeight; gw = Math.min(GRID, Math.ceil(W / 2)); gh = Math.ceil(gw * H / W);
+  N = Math.round(gw * gh * .45);
   trail = new Float32Array(gw * gh); tmp = new Float32Array(gw * gh);
   tc = document.createElement('canvas'); tc.width = gw; tc.height = gh; tctx = tc.getContext('2d');
   img = tctx.createImageData(gw, gh); px = new Uint32Array(img.data.buffer);
   veinC = document.createElement('canvas'); veinC.width = W; veinC.height = H; vctx = veinC.getContext('2d');
   ax = new Float32Array(N); ay = new Float32Array(N); aa = new Float32Array(N);
-  glowMap = noiseMap(); seed(1); veins = []; vgrid.clear(); souls = []; soul = soulT = 0;
+  glowMap = noiseMap(); seed(1); veins = []; vgrid.clear(); soul = soulT = 0;
 }
 
 // ---------- Physarum ----------
@@ -57,26 +74,31 @@ const S = (x, y) => {
   return trail[yi * gw + xi];
 };
 function step() {
-  const { sa, ra, so, dep } = P, cs = Math.cos(sa), sn = Math.sin(sa), n = activeN | 0;
-  const sp = P.ss * (1 + burst / 8) * (1 + bass * .4), d = dep * (1 + bass * .6);
+  const iv = QN / P[12], d = P[13] * (1 + bass * .6), resp = P[15], spm = (1 + burst / 8) * (1 + bass * .4), n = activeN | 0, uni = reach >= gw * .6;
   if (burst > 0) burst--;
   for (let i = 0; i < n; i++) {
-    let x = ax[i], y = ay[i], a = aa[i]; const c = Math.cos(a), s = Math.sin(a);
+    let x = ax[i], y = ay[i], a = aa[i];
+    let k = trail[(y | 0) * gw + (x | 0)] * iv; k = k >= QN ? QN : k | 0;
+    const cs = qcs[k], sn = qsn[k], ra = qra[k], so = qso[k], c = Math.cos(a), s = Math.sin(a);
     const f = S(x + c * so, y + s * so),
       l = S(x + (c * cs + s * sn) * so, y + (s * cs - c * sn) * so),
       r = S(x + (c * cs - s * sn) * so, y + (s * cs + c * sn) * so);
     if (f > l && f > r) { } else if (f < l && f < r) a += Math.random() < .5 ? -ra : ra; else if (l > r) a -= ra; else if (r > l) a += ra;
-    x += Math.cos(a) * sp; y += Math.sin(a) * sp;
+    const sp = qss[k] * spm; x += Math.cos(a) * sp; y += Math.sin(a) * sp;
+    if (Math.random() < resp) { // reaparición periódica
+      if (uni) { x = Math.random() * gw; y = Math.random() * gh; }
+      else { const cc = centers[i % centers.length], rr = Math.sqrt(Math.random()) * reach, q = Math.random() * 6.283; x = cc[0] + Math.cos(q) * rr; y = cc[1] + Math.sin(q) * rr; }
+    }
     if (x < 0) x += gw; else if (x >= gw) x -= gw; if (y < 0) y += gh; else if (y >= gh) y -= gh;
     ax[i] = x; ay[i] = y; aa[i] = a; trail[(y | 0) * gw + (x | 0)] += d;
   }
 }
 function diffuse() {
-  const dec = P.dec * (soulT ? .9 : 1);
+  const dec = P[14];
   for (let y = 1; y < gh - 1; y++) for (let x = 1; x < gw - 1; x++) {
-    const i = y * gw + x, t = trail[i];
-    const s = (trail[i - gw - 1] + trail[i - gw] + trail[i - gw + 1] + trail[i - 1] + t + trail[i + 1] + trail[i + gw - 1] + trail[i + gw] + trail[i + gw + 1]) / 9;
-    const v = (t + (s - t) * .6) * dec; tmp[i] = v > 4 ? 4 : v;
+    const i = y * gw + x;
+    const v = (trail[i - gw - 1] + trail[i - gw] + trail[i - gw + 1] + trail[i - 1] + trail[i] + trail[i + 1] + trail[i + gw - 1] + trail[i + gw] + trail[i + gw + 1]) / 9 * dec;
+    tmp[i] = v > 4 ? 4 : v;
   }
   [trail, tmp] = [tmp, trail];
 }
@@ -160,32 +182,13 @@ function updateVeins() {
   }
 }
 
-// ---------- Alma (steering: separación + wander) ----------
-let souls = [], soul = 0, soulT = 0, flash = 0;
-const spr = document.createElement('canvas'); spr.width = spr.height = 128;
-{ const g = spr.getContext('2d'), gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
-  gr.addColorStop(0, 'rgba(255,250,200,1)'); gr.addColorStop(.3, 'rgba(255,225,70,.95)'); gr.addColorStop(.65, 'rgba(255,190,0,.45)'); gr.addColorStop(1, 'rgba(255,170,0,0)');
-  g.fillStyle = gr; g.fillRect(0, 0, 128, 128); }
+// ---------- Alma: mismo Physarum con otros parámetros (manchas unidas por telaraña), en amarillo ----------
+let soul = 0, soulT = 0, flash = 0;
 function enterSoul() {
-  if (soulT) return; soulT = 1; flash = 1; burst = 45;
-  const sc = Math.min(W, H) / 900;
-  souls = Array.from({ length: 150 }, () => { const a = Math.random() * 6.283, s = 6 + Math.random() * 10; return { x: W / 2, y: H / 2, vx: Math.cos(a) * s, vy: Math.sin(a) * s, r: (6 + Math.pow(Math.random(), 2.2) * 44) * sc, ph: Math.random() * 6.28 }; });
+  if (soulT) return; soulT = 1; flash = 1; burst = 45; applyMode(4); activeN = N;
   for (let i = 0; i < N; i++) aa[i] = Math.atan2(ay[i] - gh / 2, ax[i] - gw / 2) + (Math.random() - .5); // el tejido estalla
+  for (let i = 0; i < trail.length; i++) trail[i] *= .35;
   eraseVeins();
-}
-function updateSouls(t) {
-  for (const a of souls) {
-    let sx = 0, sy = 0;
-    for (const b of souls) {
-      if (a === b) continue; const dx = a.x - b.x, dy = a.y - b.y, d = Math.hypot(dx, dy) || 1, m = (a.r + b.r) * 1.15 + 8;
-      if (d < m) { const k = (m - d) / m; sx += dx / d * k; sy += dy / d * k; }
-    }
-    a.vx += sx * .9 + (Math.random() - .5) * .12; a.vy += sy * .9 + (Math.random() - .5) * .12;
-    if (a.x < a.r) a.vx += .3; if (a.x > W - a.r) a.vx -= .3; if (a.y < a.r) a.vy += .3; if (a.y > H - a.r) a.vy -= .3;
-    a.vx *= .94; a.vy *= .94; a.x += a.vx; a.y += a.vy;
-    const rr = a.r * 1.3 * (1 + bass * .35 + .06 * Math.sin(t / 700 + a.ph));
-    ctx.drawImage(spr, a.x - rr, a.y - rr, rr * 2, rr * 2);
-  }
 }
 
 // ---------- Control ----------
@@ -193,14 +196,12 @@ function reconstruct(full) {
   if (full) trail.fill(0); else for (let i = 0; i < trail.length; i++) trail[i] *= .25;
   seed(full ? 1 : 3);
 }
-function setMode(i) {
-  if (soulT) { soulT = 0; flash = 0; reconstruct(true); }
-  mode = i; T = M[i]; buildLUT(T.pal, tl);
-}
+function applyMode(i) { mode = i; T = M[i]; buildLUT(T[17], tl); }
+function setMode(i) { if (soulT) { soulT = 0; flash = 0; } applyMode(i); }
 addEventListener('keydown', e => {
   const k = e.key.toLowerCase(); if (e.repeat) return; keys[k] = 1;
   if (/^[1-4]$/.test(k)) setMode(+k - 1); else if (k === '5') enterSoul();
-  else if (k === 'v') growVeins(); else if (k === 'b') eraseVeins(); else if (k === 'r') reconstruct(false);
+  else if (k === 'v') { if (!soulT) growVeins(); } else if (k === 'b') eraseVeins(); else if (k === 'r') reconstruct(false);
   else if (k === 'h') { const u = document.getElementById('ui'); u.hidden = !u.hidden; }
   else if (k === 'f') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
   else if (k === 'a') document.getElementById('mic').click();
@@ -213,25 +214,22 @@ addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(init, 250);
 // ---------- Loop ----------
 function frame(t) {
   listen();
-  for (const k of K) P[k] += (T[k] - P[k]) * .03;
+  for (let j = 0; j < 17; j++) P[j] += (T[j] - P[j]) * .03;
   for (let j = 0; j < 768; j++) lut[j] += (tl[j] - lut[j]) * .04;
-  soul += (soulT - soul) * .04; if (Math.abs(soulT - soul) < .002) soul = soulT;
-  if (soul < .995) { activeN = Math.min(N, activeN + 15); step(); diffuse(); }
+  soul += (soulT - soul) * .04; buildQ();
+  activeN = Math.min(N, activeN + 15); reach += .15; step(); diffuse();
 
-  const f = 1 - soul, gl = glow * f, n = gw * gh;
+  const gl = glow * (1 - soul), n = gw * gh, gain = P[16] * 256;
   for (let i = 0; i < n; i++) { // tejido + luz roja desde abajo
-    const k = Math.min(255, trail[i] * 230) | 0, g = gl * glowMap[i] * (1 - k / 300), j = k * 3;
-    const r = Math.min(255, lut[j] * f + g * 230), gg = Math.min(255, lut[j + 1] * f + g * 14), b = Math.min(255, lut[j + 2] * f + g * 38);
+    const k = G[Math.min(1023, trail[i] * gain | 0)], g = gl * glowMap[i] * (1 - k / 300), j = k * 3;
+    const r = Math.min(255, lut[j] + g * 230), gg = Math.min(255, lut[j + 1] + g * 14), b = Math.min(255, lut[j + 2] + g * 38);
     px[i] = 0xff000000 | (b << 16) | (gg << 8) | r;
   }
   tctx.putImageData(img, 0, 0);
-  ctx.globalCompositeOperation = 'source-over'; ctx.imageSmoothingEnabled = true; ctx.globalAlpha = 1;
-  ctx.drawImage(tc, 0, 0, W, H);
+  ctx.globalAlpha = 1; ctx.imageSmoothingEnabled = true; ctx.drawImage(tc, 0, 0, W, H);
 
   updateVeins();
-  ctx.globalAlpha = Math.min(1, (.8 + bass * .4) * f); ctx.drawImage(veinC, 0, 0);
-  if (soul > .01) { ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = soul; updateSouls(t); }
-  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+  ctx.globalAlpha = Math.min(1, (.8 + bass * .4) * (1 - soul)); ctx.drawImage(veinC, 0, 0); ctx.globalAlpha = 1;
   if (flash > .01) { ctx.fillStyle = `rgba(255,240,170,${flash * .9})`; ctx.fillRect(0, 0, W, H); flash *= .9; }
   requestAnimationFrame(frame);
 }
