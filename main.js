@@ -1,4 +1,4 @@
-// PIEL DE ARCA — instrumento visual. Physarum (tejido) + steering (venas y "alma"). Sin librerías.
+// PIEL DE ARCA — instrumento visual. Physarum (tejido) + steering (venas y "alma"). Sin libreríasso.
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 const N = 60000, CELL = 3;               // agentes Physarum y tamaño de celda (sube CELL si va lento)
 const K = ['sa', 'ra', 'so', 'ss', 'dep', 'dec'];
