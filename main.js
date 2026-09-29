@@ -1,15 +1,15 @@
-// PIEL DE ARCA — instrumento visual. Physarum (tejido) + steering (venas y "alma"). Sin libreríasso.
+// PIEL DE ARCA — instrumento visual. Physarum (tejido) + steering (venas y "alma"). Sin librerías.
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 let N = 0;                                // agentes (se calcula según la resolución de la simulación)
-const GRID = 520;                         // ancho de la rejilla: más alto = tejido más fino, pero más pesado
+const GRID = 420, DENSITY = 1.5;          // GRID: ancho de la rejilla (más alto = más fino y más pesado). DENSITY: agentes por celda
 // Estilo 36 Points: cada parámetro p(v) = a + b·v^c, con v = valor del trail bajo la partícula (0..1)
-// [sa: ángulo sensor, ra: giro, so: distancia sensor, ss: paso] (a,b,c) c/u, luego vs, dep, dec, resp, gain, paleta
+// [sa: ángulo sensor, ra: giro, so: distancia sensor, ss: paso] (a,b,c) c/u, luego vs (escala de v), dep, dec, resp (reaparición), gain, paleta
 const M = [
-  [.78,0,1, .45,.7,1, 6,0,1, 1.1,-.4,1, .5,.1,.72,.02, 2.5, 0], // 1 tejido
-  [.78,0,1, .78,0,1, 6,0,1, 1,0,1,      .5,.1,.75,.01, 2.5, 1], // 2 cicatriz
-  [.6,.5,1, .3,1.5,1.2, 6,0,1, 1.5,-1,1, .4,.25,.88,.015, 1.2, 2], // 3 pliegues
-  [.78,0,1, .5,.6,1, 7,0,1, 1.2,-.5,1,  .5,.1,.75,.02, 2.5, 3], // 4 fibras
-  [.6,.5,1, .1,2,1, 5,0,1, 1.4,-1.1,1,  .4,.15,.8,.006, 2, 4]   // 5 alma: manchas + telaraña
+  [.78,0,1, .5,0,1,     5,0,1,  1,0,1,      1,  .05, .7,  .03,  2.7, 0], // 1 tejido: red densa y sólida
+  [.5,0,1,  .3,0,1,     9,0,1,  1,0,1,      1,  .05, .7,  .03,  2.7, 1], // 2 cicatriz: fibras largas casi paralelas
+  [.5,.4,1, .25,.2,1,   8,-3,1, 1,0,1,      1,  .05, .75, .05,  2.7, 2], // 3 pliegues: tejido plegado
+  [.3,.5,1, .2,.3,1,    12,-6,1,1,0,1,      1,  .05, .75, .02,  2.7, 3], // 4 fibras: bandas y grietas
+  [.6,.5,1, .1,2,2,     5,0,1,  1.4,-1.1,1, .8, .05, .75, .015, 2.7, 4]  // 5 alma: puntos + telaraña fina
 ];
 const PAL = [ // 5 paradas por paleta
   [[0,0,0],[70,4,22],[140,20,60],[200,90,110],[250,190,170]],
@@ -26,7 +26,7 @@ function buildLUT(p, out) {
 }
 let mode = 0, T = M[0]; const P = Float32Array.from(M[0]);
 buildLUT(0, lut); buildLUT(0, tl);
-const G = new Uint8Array(1024); for (let i = 0; i < 1024; i++) G[i] = 255 * Math.pow(i / 1023, .6);
+const G = new Uint8Array(1024); for (let i = 0; i < 1024; i++) G[i] = 255 * Math.pow(i / 1023, .5);
 const QN = 256, qcs = new Float32Array(QN + 1), qsn = new Float32Array(QN + 1), qra = new Float32Array(QN + 1), qso = new Float32Array(QN + 1), qss = new Float32Array(QN + 1);
 function buildQ() { // tabla de parámetros según el valor del trail (evita pow por agente)
   for (let k = 0; k <= QN; k++) {
@@ -38,7 +38,7 @@ function buildQ() { // tabla de parámetros según el valor del trail (evita pow
   }
 }
 
-let W, H, gw, gh, trail, tmp, ax, ay, aa, img, px, tc, tctx, glowMap, veinC, vctx, activeN = 0, burst = 0, rt, reach = 0, centers = [[0, 0]];
+let W, H, gw, gh, trail, tmp, ax, ay, aa, img, px, tc, tctx, glowMap, veinC, vctx, activeN = 0, burst = 0, rt, reach = 0, cap = 0, ft = 16, lastT = 0, centers = [[0, 0]];
 function noiseMap() {
   const s = 22, cw = Math.ceil(gw / s) + 2, ch = Math.ceil(gh / s) + 2, g = Float32Array.from({ length: cw * ch }, Math.random), m = new Float32Array(gw * gh);
   for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
@@ -55,11 +55,11 @@ function seed(k) { // el tejido nace desde k "heridas" y se extiende (reach crec
     const c = centers[i % k], a = Math.random() * 6.283, r = Math.sqrt(Math.random()) * reach;
     ax[i] = c[0] + Math.cos(a) * r; ay[i] = c[1] + Math.sin(a) * r; aa[i] = Math.random() * 6.283;
   }
-  activeN = k > 1 ? N * .05 : 400;
+  activeN = k > 1 ? cap * .05 : 400;
 }
 function init() {
   W = cv.width = innerWidth; H = cv.height = innerHeight; gw = Math.min(GRID, Math.ceil(W / 2)); gh = Math.ceil(gw * H / W);
-  N = Math.round(gw * gh * .45);
+  N = Math.round(gw * gh * DENSITY); cap = N;
   trail = new Float32Array(gw * gh); tmp = new Float32Array(gw * gh);
   tc = document.createElement('canvas'); tc.width = gw; tc.height = gh; tctx = tc.getContext('2d');
   img = tctx.createImageData(gw, gh); px = new Uint32Array(img.data.buffer);
@@ -185,7 +185,7 @@ function updateVeins() {
 // ---------- Alma: mismo Physarum con otros parámetros (manchas unidas por telaraña), en amarillo ----------
 let soul = 0, soulT = 0, flash = 0;
 function enterSoul() {
-  if (soulT) return; soulT = 1; flash = 1; burst = 45; applyMode(4); activeN = N;
+  if (soulT) return; soulT = 1; flash = 1; burst = 45; applyMode(4); activeN = cap; reach = gw;
   for (let i = 0; i < N; i++) aa[i] = Math.atan2(ay[i] - gh / 2, ax[i] - gw / 2) + (Math.random() - .5); // el tejido estalla
   for (let i = 0; i < trail.length; i++) trail[i] *= .35;
   eraseVeins();
@@ -217,7 +217,9 @@ function frame(t) {
   for (let j = 0; j < 17; j++) P[j] += (T[j] - P[j]) * .03;
   for (let j = 0; j < 768; j++) lut[j] += (tl[j] - lut[j]) * .04;
   soul += (soulT - soul) * .04; buildQ();
-  activeN = Math.min(N, activeN + 15); reach += .15; step(); diffuse();
+  ft += (Math.min(60, t - lastT) - ft) * .05; lastT = t; // si va lento, baja agentes; si sobra tiempo, los sube
+  if (ft > 26) cap = Math.max(N * .35, cap * .99); else if (ft < 18) cap = Math.min(N, cap * 1.002);
+  activeN = Math.min(cap, activeN + N / 2400); reach += .15; step(); diffuse();
 
   const gl = glow * (1 - soul), n = gw * gh, gain = P[16] * 256;
   for (let i = 0; i < n; i++) { // tejido + luz roja desde abajo
