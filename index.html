@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Piel de Arca</title>
+<style>
+html,body{margin:0;height:100%;background:#000;overflow:hidden;font:12px/1.6 monospace;color:#c9a}
+canvas{display:block;position:fixed;inset:0}
+#ui{position:fixed;left:12px;bottom:12px;padding:10px 12px;background:#000b;border:1px solid #4a1a3a;max-width:330px}
+#ui button,#ui label{cursor:pointer;background:#2a0f22;color:#eab;border:1px solid #6a2a55;padding:3px 8px;margin:0 4px 6px 0;display:inline-block;font:inherit}
+#ui input{display:none}
+</style></head><body>
+<canvas id="c"></canvas>
+<div id="ui">
+<button id="mic">A · micrófono</button><label>Cargar canción<input type="file" id="file" accept="audio/*"></label>
+<audio id="aud" controls style="display:none;width:100%;margin-bottom:6px"></audio><br>
+1 tejido · 2 cicatriz · 3 células · 4 coágulo · <b>5 alma</b><br>
+V / clic: crecer venas · B: borrar venas · R: reconstruir<br>
+G (mantener): luz roja manual · , . sensibilidad al agudo<br>
+H: ocultar panel · F: pantalla completa
+</div>
+<script src="main.js"></script>
+</body></html>
