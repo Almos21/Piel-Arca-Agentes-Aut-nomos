@@ -4,19 +4,36 @@
 <title>Piel de Arca</title>
 <style>
 html,body{margin:0;height:100%;background:#000;overflow:hidden;font:12px/1.6 monospace;color:#c9a}
-canvas{display:block;position:fixed;inset:0}
-#ui{position:fixed;left:12px;bottom:12px;padding:10px 12px;background:#000b;border:1px solid #4a1a3a;max-width:330px}
-#ui button,#ui label{cursor:pointer;background:#2a0f22;color:#eab;border:1px solid #6a2a55;padding:3px 8px;margin:0 4px 6px 0;display:inline-block;font:inherit}
-#ui input{display:none}
+canvas{display:block;position:fixed;inset:0;width:100%;height:100%}
+#v{pointer-events:none;transition:opacity 1.2s}
+#ui{position:fixed;left:12px;bottom:12px;padding:10px 12px;background:#000c;border:1px solid #4a1a3a;max-width:340px}
+button,label.b{cursor:pointer;background:#2a0f22;color:#eab;border:1px solid #6a2a55;padding:6px 12px;margin:4px;display:inline-block;font:inherit}
+button:hover,label.b:hover{background:#45163a}
+input[type=file]{display:none}
+#start{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;z-index:5}
+#start h1{font-weight:400;letter-spacing:.4em;color:#d9a;margin:0 0 18px}
+#msg{color:#e88;max-width:480px;min-height:1.6em}
+audio{width:100%;margin:6px 0}
+a{color:#c8a}
+[hidden]{display:none!important}
 </style></head><body>
-<canvas id="c"></canvas>
+<canvas id="c"></canvas><canvas id="v"></canvas>
+<div id="start">
+  <h1>PIEL DE ARCA</h1>
+  <div><button id="bSong">▶ Iniciar con la canción</button><button id="bMic">🎤 Iniciar con micrófono</button><button id="bNone">Iniciar sin audio</button></div>
+  <p id="msg"></p>
+  <div style="opacity:.6;max-width:480px">El navegador solo deja sonar el audio después de un clic, por eso este botón.<br>Canción esperada: <b>cancion.mp3</b> (misma carpeta que index.html).</div>
+</div>
 <div id="ui">
-<button id="mic">A · micrófono</button><label>Cargar canción<input type="file" id="file" accept="audio/*"></label>
-<audio id="aud" controls style="display:none;width:100%;margin-bottom:6px"></audio><br>
-1 tejido · 2 cicatriz · 3 pliegues · 4 fibras · <b>5 alma</b><br>
-V / clic: crecer venas · B: borrar venas · R: reconstruir<br>
-G (mantener): luz roja manual · , . sensibilidad al agudo<br>
-H: ocultar panel · F: pantalla completa
+  <audio id="aud" src="cancion.mp3" controls loop preload="auto"></audio>
+  <label class="b">Cargar otra canción<input type="file" id="file" accept="audio/*"></label><br>
+  <b>1–7</b> tejidos (nacen desde el mouse o el centro) · <b>0</b> ALMA<br>
+  <b>[ ]</b> recorrer los 24 Points originales: <span id="pt" style="color:#eab">—</span><br>
+  V / clic: crecer venas · B: borrar venas · R: reconstruir desde el mouse/centro<br>
+  G (mantener): luz roja manual · , . sensibilidad al agudo · P: pausa<br>
+  H: ocultar panel · F: pantalla completa<br>
+  <span style="opacity:.6">Basado en 36 Points (Sage Jenson) e interactive-physarum (Etienne Jacob / Bleuje), CC BY-NC-SA 3.0.
+  <a href="https://www.sagejenson.com/36points/">36 Points</a> · <a href="https://github.com/Bleuje/interactive-physarum">interactive-physarum</a></span>
 </div>
 <script src="main.js"></script>
 </body></html>
