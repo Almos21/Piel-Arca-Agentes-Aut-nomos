@@ -24,11 +24,13 @@ a{color:#c8a}
   <p id="msg"></p>
   <div style="opacity:.6;max-width:480px">El navegador solo deja sonar el audio después de un clic, por eso este botón.<br>Canción esperada: <b>cancion.mp3</b> (misma carpeta que index.html).</div>
 </div>
+<div id="lbl" style="position:fixed;top:18px;left:0;right:0;text-align:center;color:#eab;font-size:16px;letter-spacing:.05em;opacity:0;transition:opacity .8s;pointer-events:none;text-shadow:0 0 6px #000"></div>
 <div id="ui">
   <audio id="aud" src="cancion.mp3" controls loop preload="auto"></audio>
   <label class="b">Cargar otra canción<input type="file" id="file" accept="audio/*"></label><br>
   <b>1–7</b> tejidos (nacen desde el mouse o el centro) · <b>0</b> ALMA<br>
-  <b>[ ]</b> recorrer los 24 Points originales: <span id="pt" style="color:#eab">—</span><br>
+  <b>]</b> siguiente Point original · <b>[</b> anterior (aparece su nombre arriba)<br>
+  <b>Shift + 1…7</b> guarda el Point visto en esa tecla<br>
   V / clic: crecer venas · B: borrar venas · R: reconstruir desde el mouse/centro<br>
   G (mantener): luz roja manual · , . sensibilidad al agudo · P: pausa<br>
   H: ocultar panel · F: pantalla completa<br>

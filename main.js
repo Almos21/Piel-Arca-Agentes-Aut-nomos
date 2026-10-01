@@ -39,15 +39,16 @@ const TEST = Q.get('test');                      // modo de prueba (sin audio), 
 const SIM_W = +(Q.get('w') || 1280);             // ancho de simulación (baja a 960 o 800 si tu GPU sufre)
 const DENSITY = +(Q.get('d') || 2.0);            // partículas por píxel de simulación
 const S = SIM_W / 1280;                          // escala de longitudes respecto al diseño original
-const PAL = [ // 5 paradas: [fondo oscuro, ..., brillo]
-  [[6,0,4],[70,4,26],[140,20,62],[205,95,110],[250,195,175]],   // 0 rojo / piel
-  [[4,0,8],[42,6,66],[112,26,128],[190,72,148],[246,205,220]],  // 1 morado
-  [[8,0,2],[96,6,22],[196,22,42],[242,115,102],[255,218,190]],  // 2 sangre / carne
-  [[6,0,6],[52,0,30],[124,12,66],[136,54,156],[238,176,196]],   // 3 cicatriz violácea
-  [[0,0,0],[92,52,0],[222,162,10],[255,224,64],[255,252,214]]]; // 4 alma (amarillo)
+const HEAL = +(Q.get('heal') || 20);          // segundos que tarda en "curarse" (rojo -> morado -> piel) tras cada cambio
+const PAL = {
+  rojo:    [[6,0,3],[90,4,18],[190,16,36],[236,60,60],[255,150,130]],     // herida abierta
+  morado:  [[5,0,8],[52,8,70],[116,30,128],[176,72,160],[232,160,210]],   // cicatrizando
+  piel:    [[10,3,4],[84,40,40],[170,100,86],[224,160,130],[250,214,186]],// curado
+  amarillo:[[0,0,0],[92,52,0],[222,162,10],[255,224,64],[255,252,214]] };  // alma
 // Modos (teclas 1..7 = tejidos, 0 = ALMA). Cada uno es [índice del Point en POINTS, paleta].
 // Cambia los números para elegir otros Points; con las teclas [ y ] puedes recorrer los 24 en vivo y ver cuál te gusta.
-const MODES = [[0,0],[8,1],[2,2],[1,3],[16,0],[4,1],[6,2],[3,4]];
+let MODES = [[0,0],[8,0],[2,0],[1,0],[16,0],[4,0],[6,0],[3,1]];
+try { const sv = JSON.parse(localStorage.getItem('pielModes') || 'null'); if (sv && sv.length === MODES.length) MODES = sv; } catch (e) { }
 const ALMA = 7;   // el último modo (amarillo) rompe el tejido
 const cv = document.getElementById('c'), gl = cv.getContext('webgl2', { antialias: false, alpha: false, preserveDrawingBuffer: !!TEST });
 const vc = document.getElementById('v'), vctx = vc.getContext('2d');
@@ -126,8 +127,11 @@ void main(){ ivec2 p=ivec2(gl_FragCoord.xy), S=ivec2(uSim); vec2 sum=vec2(0);
   float c=min(texelFetch(uCnt,q,0).x,100.); vec2 t=texelFetch(uT,q,0).xy; sum+=vec2(t.x+sqrt(c)*uDep,t.y); }
  sum/=9.; float cur=sum.x*uDec; o=vec4(cur,.8*cur+.2*sum.y,0,1); }`);
 const P_SHOW = prog(VS_Q, GLSL_COMMON + `
-uniform sampler2D uT, uCnt; uniform vec2 uRes; uniform vec3 uPA[5], uPB[5];
-uniform float uGlow, uBass, uFlash;
+uniform sampler2D uT, uCnt; uniform vec2 uRes; uniform vec3 uPR[5], uPP[5], uPS[5], uPY[5];
+uniform float uGlow, uBass, uFlash, uPalBg, uPalPen, uHeal; uniform vec2 uTC[3]; uniform float uTT[3], uTS[3];
+float healAge(vec2 p){ float nz=.86+.28*vnoise(p/uSim.y*5.);
+ for(int i=0;i<3;i++){ float d=length((p-uTC[i])/uSim.y)*nz; float a=uTime-uTT[i]-d/uTS[i]; if(a>=0.) return a; }
+ return 1000.; }
 out vec4 o;
 vec3 grad(vec3 st[5], float f){ f=clamp(f,0.,1.)*4.; int i=int(min(f,3.)); float t=f-float(i); return mix(st[i],st[i+1],t); }
 void main(){ vec2 uv=gl_FragCoord.xy/uRes;
@@ -136,7 +140,11 @@ void main(){ vec2 uv=gl_FragCoord.xy/uRes;
  float tv=min(1.,pow(tanh(9.*pow(max(0.,(250.*ty-1.)/1100.),.3)),8.5)*1.05);
  float v=smoothstep(.05,1.,clamp(max(cv,tv*.9),0.,1.));
  float lp=lerper(uv*uSim);
- vec3 col=mix(grad(uPA,v),grad(uPB,v),lp)/255.;
+ float age=healAge(uv*uSim); float hh=clamp(age/uHeal,0.,1.);
+ vec3 ch=mix(mix(grad(uPR,v),grad(uPP,v),smoothstep(0.,.5,hh)),grad(uPS,v),smoothstep(.45,1.,hh))/255.;
+ ch*=1.+.6*exp(-age*1.1); ch+=exp(-age*1.6)*vec3(.28,.0,.03)*(.35+v); // borde de la herida: recién "abierta"
+ vec3 cy=grad(uPY,v)/255.;
+ vec3 col=mix(mix(ch,cy,uPalBg),mix(ch,cy,uPalPen),lp);
  float g=.35+.65*vnoise(uv*vec2(uRes.x/uRes.y,1.)*3.+vec2(uTime*.04,0.)) ;
  col+=uGlow*g*vec3(.85,.05,.12)*(1.-v*.85);
  col*=1.+uBass*.18;
@@ -158,20 +166,23 @@ function init() {
   tTA = tex(SIM_W, SIM_H, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, null, gl.NEAREST); tTB = tex(SIM_W, SIM_H, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, null, gl.NEAREST);
   fTA = fbo(tTA); fTB = fbo(tTB);
   cntT = tex(SIM_W, SIM_H, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, null, gl.LINEAR); cntF = fbo(cntT);
-  growT0 = performance.now() / 1000; growR = .08; originSim = [cx, cy]; cur = curT = 0;
+  growT0 = performance.now() / 1000; growR = .08; originSim = [cx, cy]; cur = curT = 0; TR.length = 0; pushTr([cx, cy], .06);
 }
 function origin() { return hasMouse ? [mx / W * SIM_W, (1 - my / H) * SIM_H] : [SIM_W / 2, SIM_H / 2]; }
 function commit() { if (trR >= 0) { POINT_BG = POINT_PEN; palBg = palPen; trR = -1; } }
 function setMode(i, fast) {
   if (i < 0 || i >= MODES.length) return; commit();
-  POINT_PEN = P(MODES[i][0]); palPen = MODES[i][1]; trC = origin(); trR = 0; trSpeed = fast ? 1.5 : .5; trW = fast ? .22 : .14;
+  POINT_PEN = P(MODES[i][0]); palPen = MODES[i][1]; trC = origin(); pushTr(trC, fast ? 1.5 : .5); trR = 0; trSpeed = fast ? 1.5 : .5; trW = fast ? .22 : .14;
   soulT = (i === ALMA) ? 1 : 0; if (i === ALMA) { flash = 1; eraseVeins(); } mode = i;
 }
-let mode = 0;
-let browseI = 0;
-function browse(d) { browseI = (browseI + d + POINTS.length) % POINTS.length; commit(); POINT_PEN = P(browseI); palPen = browseI % 4; trC = origin(); trR = 0; trSpeed = .5; trW = .14; soulT = 0;
-  document.getElementById('pt').textContent = 'Point ' + browseI + ' · ' + (POINT_NAMES[browseI] || 'sin nombre'); }
-function palArr(i) { return new Float32Array(PAL[i].flat()); }
+let mode = 0; const TR = [];   // últimos cambios (nuevo primero): de aquí sale la "edad" de cada zona
+function pushTr(c, sp) { TR.unshift({ c: [c[0], c[1]], t0: performance.now() / 1000, sp }); TR.length = Math.min(TR.length, 3); }
+let browseI = -1;
+function browse(d) { browseI = (browseI + d + POINTS.length) % POINTS.length; commit(); POINT_PEN = P(browseI); palPen = 0; trC = origin(); pushTr(trC, .5); trR = 0; trSpeed = .5; trW = .14; soulT = 0;
+  const slot = MODES.findIndex((m, i) => i < ALMA && m[0] === browseI);
+  label('Point ' + (browseI + 1) + ' de ' + POINTS.length + ' · ' + (POINT_NAMES[browseI] || 'sin nombre') + (slot >= 0 ? '   (ya está en la tecla ' + (slot + 1) + ')' : '   → Shift+1…7 lo guarda en esa tecla')); }
+let lblT; function label(t) { const e = document.getElementById('lbl'); e.textContent = t; e.style.opacity = 1; clearTimeout(lblT); lblT = setTimeout(() => e.style.opacity = 0, 4500); }
+const PA = Object.fromEntries(Object.entries(PAL).map(([k, v]) => [k, new Float32Array(v.flat())]));
 
 // ---------- audio ----------
 let ac, an, fd, glow = 0, bass = 0, peak = .05, sens = 1; const keys = {};
@@ -232,7 +243,7 @@ let last = 0, ft = 16, tick = 0;
 function quad() { gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); }
 function frame(t) {
   const dt = Math.min(.05, (t - last) / 1000 || .016); last = t; ft += (Math.min(80, dt * 1000) - ft) * .05;
-  listen(); const now = t / 1000;
+  listen(); const now = performance.now() / 1000;
   if (!TEST && ++tick % 40 === 0) { // calidad adaptativa: menos partículas si la GPU va justa
     if (ft > 21 && activeRows > PH * .3) activeRows = Math.max(Math.floor(PH * .3), Math.floor(activeRows * .88)); else if (ft < 13 && activeRows < PH) activeRows = Math.min(PH, Math.ceil(activeRows * 1.05)); }
   if (trR >= 0) { trR += trSpeed * dt; if (trR - trW > 2.4) commit(); }
@@ -264,7 +275,11 @@ function frame(t) {
   bindTex('uT', 0, curT ? tTB : tTA, P_SHOW, 'uT'); bindTex('uCnt', 1, cntT, P_SHOW, 'uCnt');
   gl.uniform2f(P_SHOW.l('uSim'), SIM_W, SIM_H); gl.uniform1f(P_SHOW.l('uTime'), now); gl.uniform2f(P_SHOW.l('uC'), trC[0], trC[1]);
   gl.uniform1f(P_SHOW.l('uR'), trR >= 0 ? trR : 0); gl.uniform1f(P_SHOW.l('uWd'), trR >= 0 ? trW : .05); gl.uniform2f(P_SHOW.l('uRes'), W, H);
-  gl.uniform3fv(P_SHOW.l('uPA'), palArr(palBg)); gl.uniform3fv(P_SHOW.l('uPB'), palArr(trR >= 0 ? palPen : palBg));
+  gl.uniform3fv(P_SHOW.l('uPR'), PA.rojo); gl.uniform3fv(P_SHOW.l('uPP'), PA.morado); gl.uniform3fv(P_SHOW.l('uPS'), PA.piel); gl.uniform3fv(P_SHOW.l('uPY'), PA.amarillo);
+  gl.uniform1f(P_SHOW.l('uPalBg'), palBg); gl.uniform1f(P_SHOW.l('uPalPen'), trR >= 0 ? palPen : palBg); gl.uniform1f(P_SHOW.l('uHeal'), HEAL);
+  const tc = new Float32Array(6), tt = new Float32Array(3).fill(1e9), ts = new Float32Array(3).fill(1);
+  TR.forEach((q, i) => { tc[i * 2] = q.c[0]; tc[i * 2 + 1] = q.c[1]; tt[i] = q.t0; ts[i] = q.sp; });
+  gl.uniform2fv(P_SHOW.l('uTC'), tc); gl.uniform1fv(P_SHOW.l('uTT'), tt); gl.uniform1fv(P_SHOW.l('uTS'), ts);
   gl.uniform1f(P_SHOW.l('uGlow'), glow * (1 - soul)); gl.uniform1f(P_SHOW.l('uBass'), bass); gl.uniform1f(P_SHOW.l('uFlash'), flash * .85); quad();
   updateVeins();
   if (TEST && frameNo >= +Q.get('n') ) window.__done = true;
@@ -272,10 +287,11 @@ function frame(t) {
 }
 
 // ---------- control ----------
-function reconstruct() { originSim = origin(); resetFlag = 1; growT0 = performance.now() / 1000; growR = .02; }
+function reconstruct() { originSim = origin(); pushTr(originSim, .06); resetFlag = 1; growT0 = performance.now() / 1000; growR = .02; }
 addEventListener('keydown', e => {
   const k = e.key.toLowerCase(); if (e.repeat) return; keys[k] = 1;
-  if (/^[1-9]$/.test(k)) setMode(+k - 1); else if (k === '0') setMode(ALMA, true);
+  if (e.shiftKey && /^Digit[1-7]$/.test(e.code)) { const n = +e.code.slice(5) - 1; MODES[n] = [browseI, 0]; try { localStorage.setItem('pielModes', JSON.stringify(MODES)); } catch (x) { } label('Tecla ' + (n + 1) + ' = Point ' + (browseI + 1) + ' · ' + POINT_NAMES[browseI]); }
+  else if (/^[1-9]$/.test(k)) setMode(+k - 1); else if (k === '0') setMode(ALMA, true);
   else if (k === '[' || k === ']') browse(k === ']' ? 1 : -1); else if (k === 'v') growVeins(); else if (k === 'b') eraseVeins(); else if (k === 'r') reconstruct();
   else if (k === 'h') { document.getElementById('ui').hidden = !document.getElementById('ui').hidden; }
   else if (k === 'f') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
@@ -291,7 +307,7 @@ init(); POINT_BG = P(MODES[0] ? MODES[0][0] : 0); palBg = MODES[0] ? MODES[0][1]
 if (TEST) { POINT_BG = P(+TEST); palBg = +(Q.get('pal') || 0); document.getElementById('start').hidden = true; document.getElementById('ui').hidden = true; requestAnimationFrame(frame); }
 else {
   const st = document.getElementById('start'), msg = document.getElementById('msg');
-  const go = () => { st.hidden = true; requestAnimationFrame(frame); };
+  const go = () => { st.hidden = true; growT0 = performance.now() / 1000; TR[0].t0 = growT0; requestAnimationFrame(frame); };
   document.getElementById('bSong').onclick = async () => { const ok = await startSong(); if (!ok) { msg.textContent = 'No pude reproducir cancion.mp3 (¿está en la misma carpeta que index.html?). Arranco sin audio; puedes cargar un archivo abajo.'; } go(); };
   document.getElementById('bMic').onclick = async () => { try { await startMic(); } catch (e) { msg.textContent = 'No se pudo abrir el micrófono.'; } go(); };
   document.getElementById('bNone').onclick = go;
