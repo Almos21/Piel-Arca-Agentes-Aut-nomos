@@ -287,13 +287,14 @@ function frame(t) {
 }
 
 // ---------- control ----------
+function setPanel(show) { document.getElementById('ui').hidden = !show; document.documentElement.classList.toggle('nocur', !show); } // sin panel = sin cursor
 function reconstruct() { originSim = origin(); pushTr(originSim, .06); resetFlag = 1; growT0 = performance.now() / 1000; growR = .02; }
 addEventListener('keydown', e => {
   const k = e.key.toLowerCase(); if (e.repeat) return; keys[k] = 1;
   if (e.shiftKey && /^Digit[1-7]$/.test(e.code)) { const n = +e.code.slice(5) - 1; MODES[n] = [browseI, 0]; try { localStorage.setItem('pielModes', JSON.stringify(MODES)); } catch (x) { } label('Tecla ' + (n + 1) + ' = Point ' + (browseI + 1) + ' · ' + POINT_NAMES[browseI]); }
   else if (/^[1-9]$/.test(k)) setMode(+k - 1); else if (k === '0') setMode(ALMA, true);
   else if (k === '[' || k === ']') browse(k === ']' ? 1 : -1); else if (k === 'v') growVeins(); else if (k === 'b') eraseVeins(); else if (k === 'r') reconstruct();
-  else if (k === 'h') { document.getElementById('ui').hidden = !document.getElementById('ui').hidden; }
+  else if (k === 'h') setPanel(document.getElementById('ui').hidden);
   else if (k === 'f') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
   else if (k === 'p') { aud.paused ? aud.play() : aud.pause(); } else if (k === ',') sens *= .85; else if (k === '.') sens *= 1.18;
 });
@@ -307,7 +308,7 @@ init(); POINT_BG = P(MODES[0] ? MODES[0][0] : 0); palBg = MODES[0] ? MODES[0][1]
 if (TEST) { POINT_BG = P(+TEST); palBg = +(Q.get('pal') || 0); document.getElementById('start').hidden = true; document.getElementById('ui').hidden = true; requestAnimationFrame(frame); }
 else {
   const st = document.getElementById('start'), msg = document.getElementById('msg');
-  const go = () => { st.hidden = true; growT0 = performance.now() / 1000; TR[0].t0 = growT0; requestAnimationFrame(frame); };
+  const go = () => { st.hidden = true; setPanel(false); label('H muestra el panel y el cursor'); growT0 = performance.now() / 1000; TR[0].t0 = growT0; requestAnimationFrame(frame); };
   document.getElementById('bSong').onclick = async () => { const ok = await startSong(); if (!ok) { msg.textContent = 'No pude reproducir cancion.mp3 (¿está en la misma carpeta que index.html?). Arranco sin audio; puedes cargar un archivo abajo.'; } go(); };
   document.getElementById('bMic').onclick = async () => { try { await startMic(); } catch (e) { msg.textContent = 'No se pudo abrir el micrófono.'; } go(); };
   document.getElementById('bNone').onclick = go;
